@@ -1,0 +1,4 @@
+# Built binaries (kept out; build to a temp dir).
+/chart-bin
+/cmd/chart/chart
+/tmp/
