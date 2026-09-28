@@ -34,6 +34,10 @@ passes.** Show the output; don't assert.
 - **I/O is isolated.** `chart` and `parse` are pure (return errors, no `os.Exit`/
   print/panic). Only `cmd/chart` touches files/stdin/stdout/argv, through a testable
   `run(args, stdin, stdout, stderr) int` seam.
+- **Serve is a proxy, not a data owner.** `chart serve` renders candle serve's JSON
+  over HTTP; chart never aggregates or stores. `upstream` holds the only network
+  client (behind a `Source` interface), `server` is transport-only, and the renderer
+  stays pure. Upstream failures map to `502`; an empty candle set is `200 (no candles)`.
 - **Determinism.** Same input ⇒ byte-identical chart.
 - **Minimal, surgical diffs.** Keep every safety guard; write the failing test first.
 
@@ -52,4 +56,6 @@ passes.** Show the output; don't assert.
 |---------|-----|
 | `chart/` | `Render` — candles + height → ASCII grid lines (pure) |
 | `parse/` | `ReadCSV` — candle CSV → `[]chart.Candle`, columns bound by name (pure) |
-| `cmd/chart/` | flags + file/stdin plumbing, writes the chart — the only I/O layer |
+| `upstream/` | `Source` + `HTTPSource` — fetch candles from a `candle serve` JSON API |
+| `server/` | transport-only `/v1/chart` handler rendering over a `Source` |
+| `cmd/chart/` | flags + file/stdin plumbing and the `serve` subcommand — the only I/O layer |
