@@ -51,6 +51,43 @@ when none is given. The input must be `candle --csv` output (a header row, then 
 row per candle); `start`, `open`, `high`, `low`, and `close` columns are required
 and bound by name, so extra or reordered columns are fine.
 
+## Serve
+
+`chart serve` renders charts over HTTP as a **rendering proxy** over a running
+`candle serve`. chart owns no data: it fetches candles from candle serve's JSON API,
+renders them with the same pure renderer, and returns `text/plain`.
+
+```bash
+# terminal 1: aggregate over an ingested tickstore log
+candle serve --dir data            # :8138, JSON /v1/candles
+
+# terminal 2: render those candles over HTTP
+chart serve --candles-url http://127.0.0.1:8138   # :8139, text /v1/chart
+
+curl 'http://127.0.0.1:8139/v1/chart?symbol=SYNTH&width=120&height=16'
+```
+
+| method + path | returns |
+|---------------|---------|
+| `GET /healthz` | `ok` |
+| `GET /v1/chart?symbol=&width=&from=&to=&height=&updown=` | the rendered chart, `text/plain` |
+
+`symbol` and `width` (> 0) are required; `from`/`to` default to the full range;
+`height`/`updown` default to the serve flags. Serve flags:
+
+| flag | default | meaning |
+|------|---------|---------|
+| `--addr` | `127.0.0.1:8139` | listen address |
+| `--candles-url` | `http://127.0.0.1:8138` | base URL of an upstream `candle serve` |
+| `--height` | `20` | default price rows when a request omits `height` |
+| `--updown` | `true` | default up/down glyph distinction |
+
+Status codes: bad params (missing `symbol`, `width<=0`, bad `height`) → `400`;
+unknown path → `404`; non-GET → `405`; upstream unreachable / non-200 / undecodable
+→ `502`; an empty candle set is `200` with body `(no candles)`. This makes the
+series' "cooperate through a contract" theme explicit at the network boundary: chart
+consumes candle's **JSON** and adds only rendering.
+
 ## What it draws
 
 ```
@@ -88,7 +125,9 @@ and bound by name, so extra or reordered columns are fine.
 |---------|-----|
 | `chart/` | `Render` — candles + height → ASCII grid lines (pure) |
 | `parse/` | `ReadCSV` — candle CSV → `[]chart.Candle`, columns bound by name (pure) |
-| `cmd/chart/` | flags + file/stdin plumbing, writes the chart — the only I/O layer |
+| `upstream/` | `Source` + `HTTPSource` — fetch candles from a `candle serve` JSON API |
+| `server/` | transport-only `/v1/chart` handler rendering over a `Source` |
+| `cmd/chart/` | flags + file/stdin plumbing and the `serve` subcommand — the only I/O layer |
 
 ## Development
 
