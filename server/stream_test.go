@@ -3,6 +3,8 @@ package server
 import (
 	"bufio"
 	"context"
+	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -171,6 +173,30 @@ func TestStreamNotImplemented(t *testing.T) {
 	rec := do(h, http.MethodGet, "/v1/stream?symbol=SYNTH&width=60")
 	if rec.Code != http.StatusNotImplemented {
 		t.Fatalf("code=%d, want 501", rec.Code)
+	}
+}
+
+func TestStreamErrorReachesClient(t *testing.T) {
+	// The upstream goroutine sends on errs and closes snaps at the same instant.
+	// The server must still emit an event: error, deterministically, not ~half
+	// the time (select race between errs and the closed snaps channel).
+	for i := 0; i < 25; i++ {
+		src := &fakeStream{
+			snapshots: [][]chart.Candle{sampleCandles()},
+			err:       errors.New("upstream boom"),
+		}
+		srv := httptest.NewServer(Handler(src, Defaults{Height: 20, UpDown: true}))
+
+		resp, cancel := streamGet(t, srv, "/v1/stream?symbol=SYNTH&width=60")
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		cancel()
+		srv.Close()
+
+		if !strings.Contains(string(body), "event: error") ||
+			!strings.Contains(string(body), "upstream boom") {
+			t.Fatalf("iter %d: error not delivered to client; body=%q", i, body)
+		}
 	}
 }
 

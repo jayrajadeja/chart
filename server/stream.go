@@ -55,12 +55,28 @@ func serveStream(w http.ResponseWriter, r *http.Request, src upstream.Source, de
 			return
 		case cs, open := <-snaps:
 			if !open {
-				return // upstream ended
+				// snaps closes alongside any terminal error send; a plain
+				// select would drop the error ~half the time, so drain it here.
+				drainError(w, flusher, errs)
+				return
 			}
 			cs = drainLatest(snaps, cs)
 			writeFrame(w, renderFrame(cs, opts))
 			flusher.Flush()
 		}
+	}
+}
+
+// drainError emits a pending terminal error, if any, without blocking. It covers
+// the case where the upstream goroutine sends on errs and closes snaps at once.
+func drainError(w http.ResponseWriter, flusher http.Flusher, errs <-chan error) {
+	select {
+	case err := <-errs:
+		if err != nil {
+			fmt.Fprintf(w, "event: error\ndata: %s\n\n", err.Error())
+			flusher.Flush()
+		}
+	default:
 	}
 }
 
