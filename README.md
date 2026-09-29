@@ -69,6 +69,7 @@ curl 'http://127.0.0.1:8139/v1/chart?symbol=SYNTH&width=120&height=16'
 
 | method + path | returns |
 |---------------|---------|
+| `GET /` | an embedded browser live-view page (`EventSource` over `/v1/stream`) |
 | `GET /healthz` | `ok` |
 | `GET /v1/chart?symbol=&width=&from=&to=&height=&updown=` | the rendered chart, `text/plain` |
 | `GET /v1/stream?symbol=&width=&height=&updown=` | a live SSE feed of re-rendered chart frames |
@@ -99,6 +100,21 @@ rejoins them with `\n`); an empty set yields a `(no candles)` frame and an upstr
 failure an `event: error`. The **invariant**: a frame equals `chart.Render` of the
 current full candle set — exactly what `/v1/chart` would return at that instant.
 Requires the upstream to speak `/v1/stream`; otherwise the endpoint returns `501`.
+
+### Browser view
+
+`GET /` serves a small embedded page (`go:embed`, no build step, no external assets)
+that opens `/v1/stream` with the browser's native `EventSource` and paints each frame
+into a monospace `<pre>` — the same live chart as `curl -N`, in a browser, with a
+symbol/width/height form:
+
+```bash
+chart serve   # then open http://127.0.0.1:8139/ in a browser
+```
+
+It's a pure additional consumer of `/v1/stream` (`EventSource` joins the multi-line
+frame's `data:` lines with `\n` for free), so the page adds display only — the frame
+invariant still holds.
 
 
 Status codes: bad params (missing `symbol`, `width<=0`, bad `height`) → `400`;
@@ -145,7 +161,7 @@ consumes candle's **JSON** and adds only rendering.
 | `chart/` | `Render` — candles + height → ASCII grid lines (pure) |
 | `parse/` | `ReadCSV` — candle CSV → `[]chart.Candle`, columns bound by name (pure) |
 | `upstream/` | `Source` + `HTTPSource` — fetch candles from a `candle serve` JSON API; `StreamSource` — consume candle's `/v1/stream` SSE and maintain the candle set |
-| `server/` | transport-only `/v1/chart` handler + `/v1/stream` live frame loop rendering over a `Source` |
+| `server/` | transport-only `/v1/chart` handler + `/v1/stream` live frame loop rendering over a `Source`; `GET /` serves an embedded browser live-view page (`server/live.html`) |
 | `cmd/chart/` | flags + file/stdin plumbing and the `serve` subcommand — the only I/O layer |
 
 ## Development

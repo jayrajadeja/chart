@@ -41,6 +41,7 @@ func Handler(src upstream.Source, def Defaults) http.Handler {
 	mux.HandleFunc("/v1/stream", func(w http.ResponseWriter, r *http.Request) {
 		serveStream(w, r, src, def)
 	})
+	mux.HandleFunc("/", serveLive)
 	return mux
 }
 

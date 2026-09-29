@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>chart — live</title>
+<style>
+  :root { color-scheme: dark; }
+  body {
+    margin: 0;
+    background: #0b0f14;
+    color: #d6deeb;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    min-height: 100vh;
+  }
+  header { width: 100%; text-align: center; padding: 1rem 0 0.25rem; }
+  h1 { margin: 0; font-size: 1rem; font-weight: 600; letter-spacing: 0.04em; color: #7fdbca; }
+  form {
+    display: flex;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+    justify-content: center;
+    padding: 0.5rem;
+  }
+  label { display: flex; flex-direction: column; font-size: 0.7rem; color: #8794a3; gap: 0.15rem; }
+  input {
+    width: 6.5rem;
+    background: #11161d;
+    color: #d6deeb;
+    border: 1px solid #223040;
+    border-radius: 4px;
+    padding: 0.3rem 0.4rem;
+    font: inherit;
+  }
+  #status { font-size: 0.72rem; color: #8794a3; min-height: 1rem; padding-bottom: 0.25rem; }
+  #status.live { color: #7fdbca; }
+  #status.down { color: #ef5350; }
+  pre {
+    background: #11161d;
+    border: 1px solid #1c2836;
+    border-radius: 6px;
+    padding: 1rem 1.25rem;
+    margin: 0.5rem;
+    font-size: 0.9rem;
+    line-height: 1.15;
+    overflow-x: auto;
+    min-width: 20rem;
+  }
+  footer { font-size: 0.68rem; color: #566072; padding: 0.75rem; text-align: center; }
+</style>
+</head>
+<body>
+<header><h1>chart · live</h1></header>
+<form id="controls" onsubmit="return false">
+  <label>symbol <input id="symbol" value="SYNTH" autocomplete="off"></label>
+  <label>width <input id="width" type="number" min="1" value="5"></label>
+  <label>height <input id="height" type="number" min="1" value="12"></label>
+</form>
+<div id="status">connecting…</div>
+<pre id="chart">(waiting for first frame)</pre>
+<footer>live ASCII frames streamed from <code>/v1/stream</code> · a frame equals <code>GET /v1/chart</code> at that instant</footer>
+<script>
+(function () {
+  var chart = document.getElementById("chart");
+  var status = document.getElementById("status");
+  var symbol = document.getElementById("symbol");
+  var width = document.getElementById("width");
+  var height = document.getElementById("height");
+  var es = null;
+
+  function setStatus(text, cls) {
+    status.textContent = text;
+    status.className = cls || "";
+  }
+
+  function connect() {
+    if (es) { es.close(); }
+    var s = encodeURIComponent(symbol.value.trim() || "SYNTH");
+    var w = encodeURIComponent(width.value || "5");
+    var h = encodeURIComponent(height.value || "12");
+    setStatus("connecting…");
+    es = new EventSource("/v1/stream?symbol=" + s + "&width=" + w + "&height=" + h);
+    es.addEventListener("frame", function (e) {
+      chart.textContent = e.data;
+      setStatus("live", "live");
+    });
+    es.addEventListener("error", function (e) {
+      // EventSource reconnects on its own; report the gap while it does.
+      setStatus("stream error: " + (e.data || "reconnecting…"), "down");
+    });
+    es.onerror = function () {
+      setStatus("disconnected — reconnecting…", "down");
+    };
+  }
+
+  var reconnect = function () { connect(); };
+  symbol.addEventListener("change", reconnect);
+  width.addEventListener("change", reconnect);
+  height.addEventListener("change", reconnect);
+  connect();
+})();
+</script>
+</body>
+</html>
