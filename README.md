@@ -71,6 +71,7 @@ curl 'http://127.0.0.1:8139/v1/chart?symbol=SYNTH&width=120&height=16'
 |---------------|---------|
 | `GET /healthz` | `ok` |
 | `GET /v1/chart?symbol=&width=&from=&to=&height=&updown=` | the rendered chart, `text/plain` |
+| `GET /v1/stream?symbol=&width=&height=&updown=` | a live SSE feed of re-rendered chart frames |
 
 `symbol` and `width` (> 0) are required; `from`/`to` default to the full range;
 `height`/`updown` default to the serve flags. Serve flags:
@@ -81,6 +82,24 @@ curl 'http://127.0.0.1:8139/v1/chart?symbol=SYNTH&width=120&height=16'
 | `--candles-url` | `http://127.0.0.1:8138` | base URL of an upstream `candle serve` |
 | `--height` | `20` | default price rows when a request omits `height` |
 | `--updown` | `true` | default up/down glyph distinction |
+
+### Live stream
+
+`GET /v1/stream` is the streaming twin of `/v1/chart`: chart consumes candle
+serve's own `/v1/stream` SSE feed, maintains the candle set (upsert by `start`,
+clear on `reset`), and pushes a freshly **re-rendered** ASCII frame whenever the
+set changes — so a terminal redraws the chart live as ticks flow.
+
+```bash
+curl -N 'http://127.0.0.1:8139/v1/stream?symbol=SYNTH&width=120&height=16'
+```
+
+Each frame is one SSE `event: frame` with one `data:` line per chart row (a client
+rejoins them with `\n`); an empty set yields a `(no candles)` frame and an upstream
+failure an `event: error`. The **invariant**: a frame equals `chart.Render` of the
+current full candle set — exactly what `/v1/chart` would return at that instant.
+Requires the upstream to speak `/v1/stream`; otherwise the endpoint returns `501`.
+
 
 Status codes: bad params (missing `symbol`, `width<=0`, bad `height`) → `400`;
 unknown path → `404`; non-GET → `405`; upstream unreachable / non-200 / undecodable
@@ -125,8 +144,8 @@ consumes candle's **JSON** and adds only rendering.
 |---------|-----|
 | `chart/` | `Render` — candles + height → ASCII grid lines (pure) |
 | `parse/` | `ReadCSV` — candle CSV → `[]chart.Candle`, columns bound by name (pure) |
-| `upstream/` | `Source` + `HTTPSource` — fetch candles from a `candle serve` JSON API |
-| `server/` | transport-only `/v1/chart` handler rendering over a `Source` |
+| `upstream/` | `Source` + `HTTPSource` — fetch candles from a `candle serve` JSON API; `StreamSource` — consume candle's `/v1/stream` SSE and maintain the candle set |
+| `server/` | transport-only `/v1/chart` handler + `/v1/stream` live frame loop rendering over a `Source` |
 | `cmd/chart/` | flags + file/stdin plumbing and the `serve` subcommand — the only I/O layer |
 
 ## Development
