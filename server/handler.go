@@ -7,6 +7,7 @@ import (
 	"errors"
 	"math"
 	"net/http"
+	"net/url"
 	"strconv"
 
 	"github.com/jayrajadeja/chart/chart"
@@ -37,7 +38,52 @@ func Handler(src upstream.Source, def Defaults) http.Handler {
 	mux.HandleFunc("/v1/chart", func(w http.ResponseWriter, r *http.Request) {
 		serveChart(w, r, src, def)
 	})
+	mux.HandleFunc("/v1/stream", func(w http.ResponseWriter, r *http.Request) {
+		serveStream(w, r, src, def)
+	})
 	return mux
+}
+
+// renderParams are the query params shared by /v1/chart and /v1/stream.
+type renderParams struct {
+	symbol string
+	width  int64
+	height int
+	updown bool
+}
+
+// parseRender validates the render params common to both endpoints. On failure it
+// writes a 400 and returns ok=false.
+func parseRender(w http.ResponseWriter, q url.Values, def Defaults) (renderParams, bool) {
+	p := renderParams{height: def.Height, updown: def.UpDown}
+	p.symbol = q.Get("symbol")
+	if p.symbol == "" {
+		writeErr(w, http.StatusBadRequest, "missing symbol")
+		return p, false
+	}
+	width, err := parseInt64Required(q, "width")
+	if err != nil || width <= 0 {
+		writeErr(w, http.StatusBadRequest, "width must be a positive integer")
+		return p, false
+	}
+	p.width = width
+	if raw := q.Get("height"); raw != "" {
+		h, err := strconv.Atoi(raw)
+		if err != nil || h <= 0 {
+			writeErr(w, http.StatusBadRequest, "height must be a positive integer")
+			return p, false
+		}
+		p.height = h
+	}
+	if raw := q.Get("updown"); raw != "" {
+		b, err := strconv.ParseBool(raw)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, "updown must be a boolean")
+			return p, false
+		}
+		p.updown = b
+	}
+	return p, true
 }
 
 func serveChart(w http.ResponseWriter, r *http.Request, src upstream.Source, def Defaults) {
@@ -47,14 +93,8 @@ func serveChart(w http.ResponseWriter, r *http.Request, src upstream.Source, def
 	}
 	q := r.URL.Query()
 
-	symbol := q.Get("symbol")
-	if symbol == "" {
-		writeErr(w, http.StatusBadRequest, "missing symbol")
-		return
-	}
-	width, err := parseInt64Required(q, "width")
-	if err != nil || width <= 0 {
-		writeErr(w, http.StatusBadRequest, "width must be a positive integer")
+	p, ok := parseRender(w, q, def)
+	if !ok {
 		return
 	}
 	from, err := parseInt64Default(q, "from", minInt64)
@@ -67,32 +107,14 @@ func serveChart(w http.ResponseWriter, r *http.Request, src upstream.Source, def
 		writeErr(w, http.StatusBadRequest, "invalid to")
 		return
 	}
-	height := def.Height
-	if raw := q.Get("height"); raw != "" {
-		h, err := strconv.Atoi(raw)
-		if err != nil || h <= 0 {
-			writeErr(w, http.StatusBadRequest, "height must be a positive integer")
-			return
-		}
-		height = h
-	}
-	updown := def.UpDown
-	if raw := q.Get("updown"); raw != "" {
-		b, err := strconv.ParseBool(raw)
-		if err != nil {
-			writeErr(w, http.StatusBadRequest, "updown must be a boolean")
-			return
-		}
-		updown = b
-	}
 
-	candles, err := src.Candles(symbol, width, from, to)
+	candles, err := src.Candles(p.symbol, p.width, from, to)
 	if err != nil {
 		writeErr(w, http.StatusBadGateway, "upstream error")
 		return
 	}
 
-	lines, err := chart.Render(candles, chart.Options{Height: height, UpDown: updown})
+	lines, err := chart.Render(candles, chart.Options{Height: p.height, UpDown: p.updown})
 	if err != nil {
 		if errors.Is(err, chart.ErrNoCandles) {
 			writeText(w, "(no candles)\n")
