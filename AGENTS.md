@@ -41,7 +41,9 @@ passes.** Show the output; don't assert.
   `/v1/stream` is the live twin: it consumes candle's `/v1/stream` SSE (via a
   `StreamSource`, a **timeout-free** client since a total `Client.Timeout` would sever
   a long stream) and pushes a re-rendered frame per change — a frame equals
-  `chart.Render` of the full set, i.e. `/v1/chart` at that instant.
+  `chart.Render` of the full set, i.e. `/v1/chart` at that instant. `GET /` serves an
+  embedded (`go:embed`) browser page that consumes `/v1/stream` via `EventSource` —
+  display only, no stream logic.
 - **Determinism.** Same input ⇒ byte-identical chart.
 - **Minimal, surgical diffs.** Keep every safety guard; write the failing test first.
 
@@ -61,5 +63,5 @@ passes.** Show the output; don't assert.
 | `chart/` | `Render` — candles + height → ASCII grid lines (pure) |
 | `parse/` | `ReadCSV` — candle CSV → `[]chart.Candle`, columns bound by name (pure) |
 | `upstream/` | `Source` + `HTTPSource` (JSON `/v1/candles`); `StreamSource` (consume candle `/v1/stream` SSE, maintain the candle set) |
-| `server/` | transport-only `/v1/chart` handler + `/v1/stream` live frame loop over a `Source` |
+| `server/` | transport-only `/v1/chart` handler + `/v1/stream` live frame loop over a `Source`; `GET /` serves the embedded browser live-view page |
 | `cmd/chart/` | flags + file/stdin plumbing and the `serve` subcommand — the only I/O layer |
