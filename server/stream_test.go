@@ -55,23 +55,25 @@ func (plainSource) Candles(symbol string, width, from, to int64) ([]chart.Candle
 	return nil, nil
 }
 
-// readFrames collects SSE "event: frame" blocks from an open stream body, joining
-// each block's data lines with \n. It stops after wantAtLeast frames or timeout.
-func readFrames(t *testing.T, body *bufio.Scanner, wantAtLeast int, done func()) []string {
+// waitForFrame scans SSE "event: frame" blocks (joining each block's data lines
+// with \n) until one satisfies match, then cancels the request and returns it. A
+// safety timer cancels the request if no matching frame arrives, so a coalesced
+// or missing frame fails fast instead of hanging. Coalescing (drainLatest) means
+// the frame *count* is nondeterministic, so tests assert on frame content, never
+// a fixed count.
+func waitForFrame(t *testing.T, sc *bufio.Scanner, cancel context.CancelFunc, match func(string) bool) string {
 	t.Helper()
-	var frames []string
+	timer := time.AfterFunc(5*time.Second, cancel)
+	defer timer.Stop()
 	var event string
 	var data []string
-	for body.Scan() {
-		line := body.Text()
+	for sc.Scan() {
+		line := sc.Text()
 		switch {
 		case line == "":
-			if event == "frame" {
-				frames = append(frames, strings.Join(data, "\n"))
-				if len(frames) >= wantAtLeast {
-					done()
-					return frames
-				}
+			if event == "frame" && match(strings.Join(data, "\n")) {
+				cancel()
+				return strings.Join(data, "\n")
 			}
 			event, data = "", nil
 		case strings.HasPrefix(line, "event:"):
@@ -80,7 +82,8 @@ func readFrames(t *testing.T, body *bufio.Scanner, wantAtLeast int, done func())
 			data = append(data, strings.TrimPrefix(line[len("data:"):], " "))
 		}
 	}
-	return frames
+	t.Fatal("stream ended before a matching frame")
+	return ""
 }
 
 func streamGet(t *testing.T, srv *httptest.Server, target string) (*http.Response, context.CancelFunc) {
@@ -111,18 +114,19 @@ func TestStreamFrameMatchesRender(t *testing.T) {
 		t.Fatalf("status=%d", resp.StatusCode)
 	}
 
-	sc := bufio.NewScanner(resp.Body)
-	frames := readFrames(t, sc, 2, cancel)
-	if len(frames) < 2 {
-		t.Fatalf("got %d frames, want >=2", len(frames))
-	}
-
 	want, err := chart.Render(final, chart.Options{Height: 8, UpDown: true})
 	if err != nil {
 		t.Fatalf("render oracle: %v", err)
 	}
-	if frames[len(frames)-1] != strings.Join(want, "\n") {
-		t.Fatalf("last frame != chart.Render(final)\n got:\n%s\nwant:\n%s", frames[len(frames)-1], strings.Join(want, "\n"))
+	wantFrame := strings.Join(want, "\n")
+
+	// The final frame must equal chart.Render(final); coalescing may merge the
+	// intermediate {final[0]} frame away, so wait for the matching frame rather
+	// than a fixed count.
+	sc := bufio.NewScanner(resp.Body)
+	got := waitForFrame(t, sc, cancel, func(f string) bool { return f == wantFrame })
+	if got != wantFrame {
+		t.Fatalf("frame != chart.Render(final)\n got:\n%s\nwant:\n%s", got, wantFrame)
 	}
 }
 
@@ -136,10 +140,7 @@ func TestStreamNoCandlesFrame(t *testing.T) {
 	defer cancel()
 
 	sc := bufio.NewScanner(resp.Body)
-	frames := readFrames(t, sc, 1, cancel)
-	if len(frames) < 1 || !strings.Contains(frames[0], "(no candles)") {
-		t.Fatalf("want a (no candles) frame, got %v", frames)
-	}
+	waitForFrame(t, sc, cancel, func(f string) bool { return strings.Contains(f, "(no candles)") })
 }
 
 func TestStreamValidation(t *testing.T) {
@@ -214,7 +215,7 @@ func TestStreamClientDisconnectReturns(t *testing.T) {
 
 	resp, cancel := streamGet(t, srv, "/v1/stream?symbol=SYNTH&width=60")
 	sc := bufio.NewScanner(resp.Body)
-	readFrames(t, sc, 1, func() {})
+	waitForFrame(t, sc, cancel, func(string) bool { return true })
 	cancel()
 	resp.Body.Close()
 	time.Sleep(50 * time.Millisecond) // let the handler observe the closed conn
